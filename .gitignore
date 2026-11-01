@@ -7,6 +7,8 @@ asr.keys.json
 android/build/
 ios/WikiQABot.app/
 ios/WikiQABot
+macos/WikiQABot.app/
+macos/WikiQABot
 
 # 本地维护脚本（推送仓库用）
 push-to-github.sh
