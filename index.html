@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#2f6fed">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<title>维基问答机器人</title>
+<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+<style>
+  :root {
+    --bg: #f5f7fa;
+    --panel: #ffffff;
+    --border: #e4e8ee;
+    --text: #1f2733;
+    --muted: #6b7684;
+    --primary: #2f6fed;
+    --primary-weak: #eaf1fe;
+    --user-bubble: #2f6fed;
+    --bot-bubble: #f0f2f5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text);
+    height: 100vh; display: flex; flex-direction: column;
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--border);
+    padding: 14px 20px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  }
+  header .logo {
+    width: 34px; height: 34px; border-radius: 9px; background: var(--primary);
+    color: #fff; display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+  }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  header .spacer { flex: 1; }
+  #modelSelect, #voiceSelect {
+    font-size: 13px; padding: 6px 10px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--panel); color: var(--text); max-width: 220px;
+  }
+  #newChatBtn, #ttsBtn, #contBtn {
+    font-size: 13px; padding: 7px 14px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  #newChatBtn:hover, #ttsBtn:hover, #contBtn:hover { background: var(--primary-weak); border-color: var(--primary); color: var(--primary); }
+  #ttsBtn.off, #contBtn.off { opacity: .45; }
+  #chat {
+    flex: 1; overflow-y: auto; padding: 24px 16px;
+    display: flex; flex-direction: column; gap: 16px; max-width: 860px; width: 100%; margin: 0 auto;
+  }
+  .msg { display: flex; gap: 10px; }
+  .msg .avatar {
+    width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 16px;
+  }
+  .msg.user .avatar { background: #dde6fb; }
+  .msg.bot .avatar { background: var(--primary); color: #fff; }
+  .msg .body { max-width: 78%; display: flex; flex-direction: column; gap: 6px; }
+  .msg.user .body { align-items: flex-end; }
+  .bubble {
+    padding: 10px 14px; border-radius: 12px; font-size: 14.5px; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user .bubble { background: var(--user-bubble); color: #fff; border-top-right-radius: 4px; }
+  .msg.bot .bubble { background: var(--bot-bubble); border-top-left-radius: 4px; }
+  .sources {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .sources a {
+    font-size: 12px; color: var(--primary); background: var(--primary-weak);
+    padding: 3px 10px; border-radius: 999px; text-decoration: none;
+  }
+  .sources a:hover { text-decoration: underline; }
+  .status {
+    font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 6px;
+  }
+  .status .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--primary);
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: .3; } 50% { opacity: 1; } }
+  .welcome {
+    text-align: center; color: var(--muted); margin-top: 12vh;
+  }
+  .welcome h2 { font-size: 22px; color: var(--text); margin-bottom: 10px; }
+  .welcome p { font-size: 14px; line-height: 1.8; }
+  .welcome .examples { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .welcome .examples button {
+    font-size: 13px; padding: 8px 18px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  .welcome .examples button:hover { border-color: var(--primary); color: var(--primary); }
+  .error-bubble {
+    background: #fdecec !important; color: #b42323 !important; font-size: 13.5px;
+  }
+  @media (max-width: 640px) {
+    header { padding: 10px 12px; gap: 8px; }
+    header .sub { display: none; }
+    #modelSelect, #voiceSelect { max-width: 128px; padding: 6px 6px; }
+    #newChatBtn, #ttsBtn { padding: 7px 10px; font-size: 12px; }
+    .msg .body { max-width: 88%; }
+    .welcome { margin-top: 6vh; }
+  }
+  footer {
+    flex-shrink: 0; padding: 14px 16px calc(20px + env(safe-area-inset-bottom)); background: var(--bg);
+  }
+  #inputBar {
+    max-width: 860px; margin: 0 auto; display: flex; gap: 10px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    padding: 10px 12px; align-items: flex-end;
+    box-shadow: 0 2px 10px rgba(31,39,51,.05);
+  }
+  #inputBar:focus-within { border-color: var(--primary); }
+  #questionInput {
+    flex: 1; border: none; outline: none; font-size: 14.5px; resize: none;
+    font-family: inherit; line-height: 1.5; max-height: 120px; background: transparent; color: var(--text);
+  }
+  #sendBtn, #stopBtn {
+    border: none; border-radius: 10px; padding: 9px 18px; font-size: 14px;
+    cursor: pointer; background: var(--primary); color: #fff; flex-shrink: 0;
+  }
+  #sendBtn:disabled { background: #b9cdf6; cursor: not-allowed; }
+  #stopBtn { background: #e5484d; display: none; }
+  #micBtn {
+    border: 1px solid var(--border); background: var(--panel); border-radius: 10px;
+    width: 42px; height: 42px; font-size: 17px; cursor: pointer; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #micBtn:hover { background: var(--primary-weak); border-color: var(--primary); }
+  #micBtn:disabled { opacity: .4; cursor: not-allowed; }
+  #micBtn.recording {
+    background: #fdecec; border-color: #e5484d; color: #e5484d;
+    animation: pulse 1s infinite;
+  }
+  footer .tip {
+    max-width: 860px; margin: 8px auto 0; text-align: center;
+    font-size: 11.5px; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">📖</div>
+  <div>
+    <h1>维基问答机器人</h1>
+    <div class="sub">基于 LLM + Wiki Agent · 事实问题自动检索百科（维基百科优先，不可用时降级 Bing）</div>
+  </div>
+  <div class="spacer"></div>
+  <select id="modelSelect" title="选择模型"><option>模型加载中…</option></select>
+  <select id="voiceSelect" title="选择播报音色" style="display:none"></select>
+  <button id="ttsBtn" title="语音播报：开">🔊</button>
+  <button id="contBtn" title="连续对话：开">🔁 连续</button>
+  <button id="newChatBtn">＋ 新对话</button>
+</header>
+
+<div id="chat">
+  <div class="welcome" id="welcome">
+    <h2>你好，我是维基问答机器人 🤖</h2>
+    <p>遇到事实类问题，我会自动检索维基百科，再基于词条内容组织回答，并附上来源链接。<br>支持语音问答：点击 🎤 说话提问，回答会自动朗读（可点右上角 🔇 关闭）。</p>
+    <div class="examples">
+      <button data-q="量子计算机的基本原理是什么？">量子计算机的基本原理是什么？</button>
+      <button data-q="请介绍一下《三体》作者刘慈欣">请介绍一下《三体》作者刘慈欣</button>
+      <button data-q="区块链技术是怎么运作的？">区块链技术是怎么运作的？</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div id="inputBar">
+    <button id="micBtn" title="点击说话">🎤</button>
+    <textarea id="questionInput" rows="1" placeholder="输入或说出你的问题，回车发送（Shift+回车换行）"></textarea>
+    <button id="sendBtn">发送</button>
+    <button id="stopBtn">停止</button>
+  </div>
+  <div class="tip">回答由 AI 生成，词条内容来自维基百科/搜索引擎，请注意甄别 · 播报音色可在右上角下拉框切换（推荐带「在线」标记的高品质语音）</div>
+</footer>
+
+<script>
+// ---------- 云服务初始化（publicConfig） ----------
+const cloud = WorkBuddyCloud.createWorkBuddyCloud({
+  endpoint: 'https://wiki-qa-bot-06186.app.workbuddy.host',
+  oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
+  publishableKey: 'wbpk_T9SQEhlAj0vDjTknRFzX6x_LYJFBC25E41osTK5RMs19Z4wDJ7yV1gR',
+});
+
+const SYSTEM_PROMPT = [
+  '你是「维基问答机器人」，一个基于百科知识检索的语音问答助手，你的回答会被朗读出来。',
+  '规则：',
+  '1. 涉及事实、人物、事件、概念、技术等知识性问题时，先调用 search_wikipedia 工具做百科检索，再基于检索到的内容回答，不要凭空编造。',
+  '2. 检索源会自动降级：优先维基百科，不可用时自动切换到搜索引擎的百科类结果。',
+  '3. 全程最多调用 2 次检索工具；拿到检索结果后必须立即组织最终回答，不要反复检索。',
+  '4. 回答用简体中文、口语化短句（会被语音朗读），默认不超过 150 字，直接给核心答案；用户明确要求详细时才展开。',
+  '5. 回答末尾用一行「来源：名称1、名称2」列出实际参考的内容来源（用检索结果中的标题）。',
+  '6. 如果检索不到相关内容，或问题只是闲聊，直接回答并说明依据；闲聊不必调用工具。',
+].join('\n');
+
+const TOOLS = [{
+  type: 'function',
+  function: {
+    name: 'search_wikipedia',
+    description: '百科检索工具：优先检索维基百科（中文→英文），不可用时自动降级为搜索引擎的百科类结果。返回标题、链接、来源和摘要。回答事实性知识问题前应调用本工具。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '检索关键词，通常是问题中的核心实体或概念' },
+      },
+      required: ['query'],
+    },
+  },
+}];
+
+const MAX_TOOL_ROUNDS = 2;
+
+// ---------- 状态 ----------
+let modelId = null;
+let history = [];            // [{role, content}] 不含 system
+let conversationId = crypto.randomUUID();
+let generating = false;
+let controller = null;
+
+// ---------- DOM ----------
+const chatEl = document.getElementById('chat');
+const inputEl = document.getElementById('questionInput');
+const sendBtn = document.getElementById('sendBtn');
+const stopBtn = document.getElementById('stopBtn');
+const modelSelect = document.getElementById('modelSelect');
+const newChatBtn = document.getElementById('newChatBtn');
+const micBtn = document.getElementById('micBtn');
+const ttsBtn = document.getElementById('ttsBtn');
+const voiceSelect = document.getElementById('voiceSelect');
+const contBtn = document.getElementById('contBtn');
+
+// ---------- 语音播报（TTS） ----------
+let autoSpeak = true;
+let zhVoice = null;
+const VOICE_PREF_KEY = 'wiki-qa-voice';
+const NativeVoice = window.AndroidVoice || null; // 安卓 APK 原生语音桥
+
+// 音色选择器：列出中文语音，在线高品质语音（如 Edge 晓晓）排前面
+function listZhVoices() {
+  const all = speechSynthesis.getVoices();
+  const zh = all.filter(v => v.lang.toLowerCase().startsWith('zh'));
+  // 在线/神经语音（名字含 Online / Natural，或 Edge 的微软语音）通常音质最好，优先展示
+  const score = v => {
+    const n = v.name.toLowerCase();
+    let s = 0;
+    if (/online|natural|neural/.test(n)) s += 100;
+    if (v.lang.replace('_', '-').toLowerCase() === 'zh-cn') s += 10;
+    if (/xiaoxiao|xiaoyi|yunxi|yunjian|yunxia/.test(n)) s += 5; // 常见优质中文音色
+    if (v.localService) s -= 1; // 同等条件下在线语音优先
+    return s;
+  };
+  return zh.sort((a, b) => score(b) - score(a));
+}
+
+function populateVoiceSelect() {
+  const voices = listZhVoices();
+  if (!voices.length) { voiceSelect.style.display = 'none'; return; }
+  const saved = localStorage.getItem(VOICE_PREF_KEY);
+  const valid = voices.some(v => v.name === saved);
+  voiceSelect.innerHTML = voices.map(v =>
+    '<option value="' + escAttr(v.name) + '" data-uri="' + escAttr(v.voiceURI || '') + '">'
+    + escHtml(v.name.replace(/^Microsoft |^Google /, '')) + (v.localService ? '（本机）' : '') + '</option>').join('');
+  // 默认选高品质在线语音；若之前手动选过且仍存在，则恢复
+  const preferred = valid ? saved : (voices[0] && voices[0].name);
+  voiceSelect.value = preferred || '';
+  applyVoiceFromSelect();
+}
+
+function applyVoiceFromSelect() {
+  const name = voiceSelect.value;
+  if (!name) { zhVoice = null; return; }
+  zhVoice = speechSynthesis.getVoices().find(v => v.name === name) || null;
+  if (zhVoice) localStorage.setItem(VOICE_PREF_KEY, name);
+}
+if ('speechSynthesis' in window) {
+  populateVoiceSelect();
+  speechSynthesis.onvoiceschanged = populateVoiceSelect; // 语音列表异步加载
+} else {
+  // 安卓 WebView 等环境：无网页 TTS，播报走原生桥（NativeVoice），仅隐藏音色选择器
+  voiceSelect.style.display = 'none';
+}
+
+function stopSpeaking() {
+  if (NativeVoice) { NativeVoice.stopSpeak(); return; }
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+}
+
+function speakAnswer(text) {
+  if (!autoSpeak) return;
+  // 朗读时跳过「来源：」行，避免念出一串链接
+  const toSpeak = text.split('\n').filter(l => !/^来源[:：]/.test(l.trim())).join('\n').trim();
+  if (!toSpeak) return;
+  if (NativeVoice) { NativeVoice.speak(toSpeak.slice(0, 800)); return; }
+  if (!('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(toSpeak.slice(0, 800));
+  u.lang = 'zh-CN';
+  if (zhVoice) u.voice = zhVoice;
+  u.onend = () => { if (typeof onTtsDone === 'function') onTtsDone(); };
+  u.onerror = () => { if (typeof onTtsDone === 'function') onTtsDone(); };
+  speechSynthesis.speak(u);
+}
+
+// ---------- 连续对话 ----------
+let continuousMode = localStorage.getItem('qa-continuous') !== '0';
+let awaitingTts = false;
+
+function renderContBtn() {
+  contBtn.textContent = continuousMode ? '🔁 连续' : '🔁 单次';
+  contBtn.classList.toggle('off', !continuousMode);
+  contBtn.title = continuousMode ? '连续对话：开（回答后自动继续聆听）' : '连续对话：关';
+}
+contBtn.onclick = () => {
+  continuousMode = !continuousMode;
+  localStorage.setItem('qa-continuous', continuousMode ? '1' : '0');
+  renderContBtn();
+};
+renderContBtn();
+
+window.onTtsDone = () => {
+  if (awaitingTts) {
+    awaitingTts = false;
+    if (continuousMode && !generating) setTimeout(autoListen, 300);
+  }
+};
+function autoListen() {
+  if (!continuousMode || generating || !asrConfigured) return;
+  if (NativeVoice && typeof NativeVoice.startAsr === 'function' && NativeVoice.hasNativeAsr()) {
+    NativeVoice.startAsr();
+    nativeAsrBegin();
+  } else {
+    startRecording(); // 浏览器路径（含 VAD）
+  }
+}
+
+ttsBtn.onclick = () => {
+  autoSpeak = !autoSpeak;
+  ttsBtn.textContent = autoSpeak ? '🔊' : '🔇';
+  ttsBtn.classList.toggle('off', !autoSpeak);
+  ttsBtn.title = autoSpeak ? '语音播报：开' : '语音播报：关';
+  if (!autoSpeak) stopSpeaking();
+};
+
+voiceSelect.onchange = () => {
+  applyVoiceFromSelect();
+  // 切换音色后立即用新音色播一句试听
+  stopSpeaking();
+  const u = new SpeechSynthesisUtterance('你好，这是当前播报音色的试听效果。');
+  u.lang = 'zh-CN';
+  if (zhVoice) u.voice = zhVoice;
+  speechSynthesis.speak(u);
+};
+
+// ---------- 语音输入 ----------
+// 优先级：后端百度识别（页面录音上传，国内网络可用）→ 安卓原生桥 → Web Speech API
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recog = null, listening = false, recogFailed = false;
+let asrConfigured = false;
+
+// 安卓原生桥回调（由 MainActivity 通过 evaluateJavascript 调用）
+window.onNativeVoiceStart = () => {
+  listening = true; recogFailed = false;
+  micBtn.classList.add('recording'); micBtn.textContent = '⏹';
+  stopSpeaking();
+};
+window.onNativeVoiceResult = (text) => { if (text) inputEl.value = text; };
+window.onNativeVoiceEnd = () => {
+  listening = false;
+  micBtn.classList.remove('recording'); micBtn.textContent = '🎤';
+  const q = inputEl.value.trim();
+  if (q && !recogFailed && !generating) { inputEl.value = ''; ask(q); } // 说完自动发送
+};
+window.onNativeVoiceError = (code) => {
+  recogFailed = true;
+  const msgs = { '1': '网络异常或识别服务不可用', '2': '没有听到声音，请再试一次', '3': '音频出现问题', '6': '没有匹配到语音结果', '7': '识别出错，请再试一次', '8': '识别服务繁忙', '9': '麦克风权限不足' };
+  appendError('语音识别失败：' + (msgs[code] || '错误码 ' + code) + '，可改用打字提问。');
+};
+
+// ---------- 页面录音 → 后端识别 ----------
+  let mediaStream = null, audioCtx = null, processor = null, micSource = null;
+let pcmChunks = [], recording = false, recordTimer = null, noSpeechCancel = false;
+
+function encodeWav(samples, rate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const wstr = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  wstr(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); wstr(8, 'WAVE'); wstr(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  wstr(36, 'data'); v.setUint32(40, samples.length * 2, true);
+  let o = 44;
+  for (let i = 0; i < samples.length; i++, o += 2) v.setInt16(o, samples[i], true);
+  return new Uint8Array(buf);
+}
+
+function appendInfo(text) {
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  div.innerHTML = '<div class="avatar">🎙</div><div class="body"><div class="bubble" style="background:#eef2f7;color:#5a6572;font-size:13px"></div></div>';
+  div.querySelector('.bubble').textContent = text;
+  chatEl.appendChild(div);
+  scrollToBottom();
+  return div;
+}
+let voiceTip = null;
+function showVoiceTip(t) { hideVoiceTip(); voiceTip = appendInfo(t); }
+function hideVoiceTip() { if (voiceTip) { voiceTip.remove(); voiceTip = null; } }
+
+async function startRecording() {
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  } catch (e) {
+    const name = e && e.name;
+    const msg = name === 'NotAllowedError' ? '麦克风权限被拒绝，请在应用/浏览器权限中允许麦克风后重试。'
+      : name === 'NotReadableError' ? '麦克风不可用（被占用或设备没有可用麦克风，模拟器常见）。'
+      : '无法访问麦克风（' + name + '），请检查设备与权限。';
+    appendError(msg);
+    return;
+  }
+  stopSpeaking();
+  audioCtx = new AudioContext({ sampleRate: 16000 });
+  micSource = audioCtx.createMediaStreamSource(mediaStream);
+  processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  pcmChunks = [];
+  noSpeechCancel = false;
+  micSource.connect(processor);
+  processor.connect(audioCtx.destination);
+  recording = true; listening = true; recogFailed = false;
+  micBtn.classList.add('recording'); micBtn.textContent = '⏹';
+  showVoiceTip('🎤 请说话，说完自动发送…');
+  // 浏览器端 VAD：检测说话→静音 0.8s 自动结束
+  const vad = { noise: [], threshold: -1, speech: false, speechMs: 0, silenceMs: 0, totalMs: 0, frameMs: 4096 / 16 };
+  processor.onaudioprocess = e => {
+    if (!recording) return;
+    const d = e.inputBuffer.getChannelData(0);
+    const buf = new Int16Array(d.length);
+    for (let i = 0; i < d.length; i++) {
+      const s = Math.max(-1, Math.min(1, d[i]));
+      buf[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    pcmChunks.push(buf);
+    vad.totalMs += vad.frameMs;
+    let sum = 0;
+    for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
+    const rms = Math.sqrt(sum / d.length);
+    if (vad.threshold < 0) {
+      if (vad.totalMs <= 500) vad.noise.push(rms);
+      else vad.threshold = (vad.noise.reduce((a, b) => a + b, 0) / vad.noise.length) * 2 + 0.03;
+    } else if (!vad.speech) {
+      if (rms > vad.threshold) { vad.speech = true; vad.speechMs = vad.totalMs; vad.silenceMs = 0; }
+      else if (vad.totalMs > 8000) { noSpeechCancel = true; stopRecording(); }
+    } else {
+      if (rms > vad.threshold) vad.silenceMs = 0; else vad.silenceMs += vad.frameMs;
+      if (vad.silenceMs >= 800 && (vad.totalMs - vad.speechMs) >= 300) stopRecording();
+    }
+  };
+  recordTimer = setTimeout(stopRecording, 20000); // 最长 20 秒
+}
+
+async function stopRecording() {
+  if (!recording) return;
+  recording = false; clearTimeout(recordTimer);
+  micBtn.classList.remove('recording'); micBtn.textContent = '🎤';
+  listening = false;
+  hideVoiceTip();
+  try { if (processor) processor.disconnect(); } catch (e) {}
+  try { if (micSource) micSource.disconnect(); } catch (e) {}
+  try { if (mediaStream) mediaStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  const rate = (audioCtx && audioCtx.sampleRate) || 16000;
+  try { if (audioCtx) audioCtx.close(); } catch (e) {}
+  audioCtx = null;
+
+  const total = pcmChunks.reduce((a, b) => a + b.length, 0);
+  if (!total || noSpeechCancel) { appendError('没有听到声音，请靠近麦克风再说一次。'); return; }
+  const merged = new Int16Array(total);
+  let off = 0;
+  for (const b of pcmChunks) { merged.set(b, off); off += b.length; }
+  pcmChunks = [];
+  if (merged.length < rate * 0.4) { appendError('录音太短，请说完一句话再停止。'); return; }
+  const wav = encodeWav(merged, rate);
+
+  micBtn.disabled = true;
+  const info = appendInfo('🎙 语音识别中…');
+  try {
+    const extra = location.search ? '?' + location.search.slice(1) : '';
+    const res = await fetch('/api/asr' + extra, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
+    const j = await res.json();
+    info.remove();
+    if (!res.ok || !j.text) {
+      appendError('语音识别失败：' + (j.error || ('HTTP ' + res.status)));
+      return;
+    }
+    inputEl.value = j.text;
+    if (!generating) { inputEl.value = ''; ask(j.text); } // 识别成功自动提问
+    else inputEl.value = j.text;
+  } catch (e) {
+    info.remove();
+    appendError('语音识别失败：网络异常，请重试或打字提问。');
+  } finally {
+    micBtn.disabled = false;
+  }
+}
+
+// 原生 ASR 回调（App 内：原生录音 → 服务端识别）
+window.onNativeAsrStart = () => {
+  listening = true;
+  micBtn.classList.add('recording'); micBtn.textContent = '⏹';
+  stopSpeaking();
+};
+window.onNativeAsrResult = (text) => {
+  listening = false;
+  micBtn.classList.remove('recording'); micBtn.textContent = '🎤';
+  if (text && !generating) { ask(text); }
+  else if (text) { inputEl.value = text; }
+};
+window.onNativeAsrError = (msg) => {
+  listening = false;
+  micBtn.classList.remove('recording'); micBtn.textContent = '🎤';
+  appendError('语音识别失败：' + msg);
+};
+
+// 原生 ASR：轮询状态（App 内：原生录音 → 服务端识别）
+let asrPoll = null;
+function nativeAsrStopUI() {
+  listening = false;
+  if (asrPoll) { clearInterval(asrPoll); asrPoll = null; }
+  micBtn.classList.remove('recording'); micBtn.textContent = '🎤';
+  hideVoiceTip();
+}
+function nativeAsrBegin() {
+  listening = true;
+  micBtn.classList.add('recording'); micBtn.textContent = '⏹';
+  stopSpeaking();
+  showVoiceTip('🎤 请说话，说完自动发送…');
+  if (asrPoll) clearInterval(asrPoll);
+  asrPoll = setInterval(() => {
+    let st;
+    try { st = JSON.parse(NativeVoice.getAsrStatus()); } catch (e) { return; }
+    if (st.status === 'idle') { nativeAsrStopUI(); try { NativeVoice.asrReset(); } catch (e) {} return; } // 用户取消
+    if (st.status === 'captured') {
+      clearInterval(asrPoll); asrPoll = null;
+      micBtn.textContent = '⏳'; // 上传识别中
+      (async () => {
+        try {
+          const b64 = NativeVoice.getAsrAudio();
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const extra = location.search ? '?' + location.search.slice(1) : '';
+          let res = null, j = null, lastErr = null;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              res = await fetch('/api/asr' + extra, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: bytes });
+              j = await res.json();
+              lastErr = null;
+              break;
+            } catch (e) {
+              lastErr = e;
+              await new Promise(r => setTimeout(r, 800));
+            }
+          }
+          if (lastErr) throw lastErr;
+          if (res.ok && j.text && !generating) { ask(j.text); }
+          else if (res.ok && j.text) { inputEl.value = j.text; }
+          else { appendError('语音识别失败：' + (j.error || ('HTTP ' + res.status))); }
+        } catch (e) {
+          appendError('语音识别失败：网络异常（已重试 3 次），请换个网络环境或稍后再试。');
+        } finally {
+          nativeAsrStopUI();
+          try { NativeVoice.asrReset(); } catch (e2) {}
+        }
+      })();
+      return;
+    }
+    if (st.status === 'error') {
+      nativeAsrStopUI();
+      appendError('语音识别失败：' + (st.error || '未知错误'));
+      try { NativeVoice.asrReset(); } catch (e) {}
+    }
+  }, 400);
+}
+
+function setupMicMode() {
+  if (asrConfigured) {
+    if (NativeVoice && typeof NativeVoice.hasNativeAsr === 'function' && NativeVoice.hasNativeAsr()) {
+      // 安卓 App：原生录音上传（绕开 WebView 麦克风兼容性问题）
+      micBtn.onclick = () => {
+        if (generating) return;
+        if (listening) { NativeVoice.stopAsr(); }
+        else { NativeVoice.startAsr(); nativeAsrBegin(); }
+      };
+    } else {
+      // 浏览器：页面录音 → 后端识别
+      micBtn.onclick = () => { if (!generating) { recording ? stopRecording() : startRecording(); } };
+    }
+    micBtn.title = '点击说话（再次点击结束）';
+    return;
+  }
+  // 未配置后端识别：安卓原生桥 → Web Speech API → 隐藏
+  if (NativeVoice && typeof NativeVoice.canListen === 'function' && NativeVoice.canListen()) {
+    micBtn.onclick = () => {
+      if (generating) return;
+      if (listening) { NativeVoice.stopListening(); return; }
+      NativeVoice.startListening();
+    };
+    micBtn.title = '点击说话';
+  } else if (SR) {
+    recog = new SR();
+    recog.lang = 'zh-CN';
+    recog.interimResults = true;
+    recog.continuous = false;
+    recog.maxAlternatives = 1;
+
+    recog.onstart = () => {
+      listening = true; recogFailed = false;
+      micBtn.classList.add('recording');
+      micBtn.textContent = '⏹';
+      stopSpeaking(); // 说话时暂停播报，避免麦克风拾音干扰
+    };
+    recog.onresult = (e) => {
+      let interim = '', final = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t; else interim += t;
+      }
+      inputEl.value = final || interim;
+    };
+    recog.onerror = (e) => {
+      recogFailed = true;
+      const msgs = {
+        'not-allowed': '麦克风权限被拒绝，请在浏览器地址栏的权限设置中允许麦克风访问。',
+        'no-speech': '没有听到声音，请再试一次。',
+        'network': '语音识别服务网络异常：浏览器内置识别需连接 Google 服务，当前网络不可用。建议改用打字提问。',
+      };
+      appendError(msgs[e.error] || '语音识别出错：' + e.error);
+    };
+    recog.onend = () => {
+      listening = false;
+      micBtn.classList.remove('recording');
+      micBtn.textContent = '🎤';
+      const q = inputEl.value.trim();
+      if (q && !recogFailed && !generating) { inputEl.value = ''; ask(q); } // 说完自动发送
+    };
+    micBtn.onclick = () => {
+      if (generating) return;
+      if (listening) { recog.stop(); return; }
+      try { recog.start(); } catch (e) { /* 已在录音中，忽略 */ }
+    };
+  } else {
+    micBtn.style.display = 'none';
+  }
+}
+
+fetch('/api/asr/status' + location.search).then(r => r.json()).then(j => { asrConfigured = !!j.configured; }).catch(() => {}).finally(setupMicMode);
+
+// ---------- 工具：Wiki 检索（走后端代理，多源降级：中/英维基 → Bing） ----------
+async function searchWiki(query) {
+  // 平台要求所有请求带分享参数，透传当前页面 URL 上的查询串
+  const extra = location.search ? '&' + location.search.slice(1) : '';
+  const res = await fetch('/api/wiki?q=' + encodeURIComponent(query) + extra);
+  if (!res.ok) {
+    let msg = 'HTTP ' + res.status;
+    try { const j = await res.json(); if (j.error) msg = j.error; } catch (e) {}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  const results = (data.results || []).map(r => ({
+    标题: r.title,
+    链接: r.url,
+    来源: r.source,
+    摘要: r.snippet,
+  }));
+  return JSON.stringify({ 检索源: data.source, 结果: results, 说明: results.length ? undefined : '未检索到相关内容' });
+}
+
+// ---------- 工具：模型列表 ----------
+async function loadModels() {
+  try {
+    const models = await cloud.llm.models.list();
+    const usable = models.filter(m => m.disabled !== true);
+    if (!usable.length) {
+      modelSelect.innerHTML = '<option>暂无可用模型</option>';
+      return;
+    }
+    modelSelect.innerHTML = usable.map(m =>
+      '<option value="' + escAttr(m.id) + '">' + escHtml(m.name || m.id) + '</option>').join('');
+    // 默认选快模型（无长思维链）：Hunyuan-Turbos → GLM Flash → DeepSeek Flash
+    const PREFERRED = ['hunyuan-chat', 'glm-5.3-flash', 'deepseek-v4.1-flash', 'minimax-m3.1-flash'];
+    const saved = localStorage.getItem('qa-model');
+    if (saved && usable.some(m => m.id === saved)) modelId = saved;
+    else modelId = PREFERRED.find(pid => usable.some(m => m.id === pid)) || usable[0].id;
+    modelSelect.value = modelId;
+    modelSelect.onchange = () => { modelId = modelSelect.value; localStorage.setItem('qa-model', modelId); };
+  } catch (e) {
+    modelSelect.innerHTML = '<option>模型列表加载失败</option>';
+    appendError('模型列表加载失败：' + errText(e));
+  }
+}
+
+// ---------- UI 辅助 ----------
+function escHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function escAttr(s) { return escHtml(s); }
+function errText(e) {
+  if (e && e.error && e.error.code) {
+    const code = e.error.code || '';
+    if (code.startsWith('quota_')) return '额度不足或触发限流，请稍后再试。';
+    if (code.startsWith('auth_')) return '云服务鉴权失败（通常是访问域名与绑定域名不一致），请通过发布后的链接访问。';
+    if (code.startsWith('gateway_') || code.startsWith('model_')) return '模型服务暂时不可用，请点击重试。';
+    if (code.startsWith('request_')) return '请求参数有误：' + (e.error.message || code);
+    return (e.error.message || code) + (e.requestId ? '（请求ID ' + e.requestId + '）' : '');
+  }
+  return (e && e.message) ? e.message : String(e);
+}
+function scrollToBottom() { chatEl.scrollTop = chatEl.scrollHeight; }
+
+function removeWelcome() {
+  const w = document.getElementById('welcome');
+  if (w) w.remove();
+}
+
+function addUserMsg(text) {
+  removeWelcome();
+  const div = document.createElement('div');
+  div.className = 'msg user';
+  div.innerHTML = '<div class="avatar">🧑</div><div class="body"><div class="bubble"></div></div>';
+  div.querySelector('.bubble').textContent = text;
+  chatEl.appendChild(div);
+  scrollToBottom();
+}
+
+function addBotMsg() {
+  removeWelcome();
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  div.innerHTML = '<div class="avatar">🤖</div><div class="body"><div class="status" style="display:none"></div><div class="bubble"></div><div class="sources"></div></div>';
+  chatEl.appendChild(div);
+  scrollToBottom();
+  return {
+    root: div,
+    statusEl: div.querySelector('.status'),
+    bubbleEl: div.querySelector('.bubble'),
+    sourcesEl: div.querySelector('.sources'),
+    setStatus(t) { this.statusEl.style.display = 'flex'; this.statusEl.innerHTML = '<span class="dot"></span>' + escHtml(t); },
+    hideStatus() { this.statusEl.style.display = 'none'; },
+  };
+}
+
+function appendError(text) {
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  div.innerHTML = '<div class="avatar">⚠️</div><div class="body"><div class="bubble error-bubble"></div></div>';
+  div.querySelector('.bubble').textContent = text;
+  chatEl.appendChild(div);
+  scrollToBottom();
+}
+
+function setGenerating(on) {
+  generating = on;
+  sendBtn.disabled = on;
+  sendBtn.style.display = on ? 'none' : '';
+  stopBtn.style.display = on ? '' : 'none';
+  micBtn.disabled = on;
+  inputEl.focus();
+}
+
+// ---------- Agent 主流程 ----------
+async function ask(question) {
+  addUserMsg(question);
+  history.push({ role: 'user', content: question });
+
+  const ui = addBotMsg();
+  controller = new AbortController();
+  setGenerating(true);
+  stopSpeaking(); // 开始新一轮问答前停止播报
+  let hadError = false;
+
+  // 本轮的模型上下文（含 system），工具轮次只在此局部累积，最终只把答案文本写入 history
+  let messages = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
+  const sources = new Set();
+  let answer = '';
+
+  try {
+    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+      let content = '';
+      let reasoning = '';
+      const toolCalls = new Map(); // index -> {id, name, arguments}
+      let finishReason = null;
+      ui.setStatus(round === 0 ? '🤔 正在思考…' : '✍️ 正在组织回答…');
+
+      for await (const chunk of cloud.llm.chat.completions.create({
+        model: modelId,
+        messages,
+        // 最后一轮不给工具，强制模型基于已有检索结果作答
+        tools: round < MAX_TOOL_ROUNDS ? TOOLS : undefined,
+        stream: true,
+        temperature: 0.7,
+        signal: controller.signal,
+      })) {
+        const delta = chunk.choices[0] && chunk.choices[0].delta;
+        if (!delta) {
+          if (chunk.choices[0] && chunk.choices[0].finish_reason) finishReason = chunk.choices[0].finish_reason;
+          continue;
+        }
+        if (delta.content) {
+          content += delta.content;
+          ui.hideStatus();
+          ui.bubbleEl.textContent = content;
+          scrollToBottom();
+        }
+        if (delta.reasoning_content) {
+          // 思维链阶段：实时显示思考进度，避免长时间「无进展」假象
+          reasoning += delta.reasoning_content;
+          if (!content) ui.setStatus('🤔 思考中… 已思考 ' + reasoning.length + ' 字');
+        }
+        if (delta.tool_calls) {
+          ui.setStatus('🔍 正在查询维基百科…');
+          for (const tc of delta.tool_calls) {
+            const cur = toolCalls.get(tc.index) || { id: '', name: '', arguments: '' };
+            if (tc.id) cur.id = tc.id;
+            if (tc.function && tc.function.name) cur.name = tc.function.name;
+            if (tc.function && tc.function.arguments) cur.arguments += tc.function.arguments;
+            toolCalls.set(tc.index, cur);
+          }
+        }
+        if (chunk.choices[0] && chunk.choices[0].finish_reason) finishReason = chunk.choices[0].finish_reason;
+      }
+
+      if (finishReason === 'tool_calls' && toolCalls.size > 0 && round < MAX_TOOL_ROUNDS) {
+        messages.push({ role: 'assistant', content: content || '', tool_calls: [...toolCalls.values()].map(tc => ({
+          id: tc.id || ('call_' + tc.index), type: 'function',
+          function: { name: tc.name, arguments: tc.arguments || '{}' },
+        })) });
+        for (const [, tc] of toolCalls) {
+          let query = '';
+          try { query = JSON.parse(tc.arguments || '{}').query || ''; } catch (e) {}
+          ui.setStatus('🔍 正在检索「' + (query || tc.name) + '」…');
+          const result = await searchWiki(query);
+          try { (JSON.parse(result).结果 || []).forEach(r => r.标题 && sources.add(r)); } catch (e) {}
+          messages.push({ role: 'tool', tool_call_id: tc.id || ('call_' + tc.index), content: result });
+        }
+        continue; // 进入下一轮，让模型基于检索结果回答
+      }
+
+      // 正常结束
+      answer = content;
+      break;
+    }
+
+    if (!answer) answer = '（模型未返回内容，请重试。）';
+    ui.bubbleEl.textContent = answer;
+
+    // 渲染来源
+    if (sources.size > 0) {
+      ui.sourcesEl.innerHTML = [...sources].map(s =>
+        '<a href="' + escAttr(s.链接) + '" target="_blank" rel="noopener" title="' + escAttr(s.来源 || '') + '">📄 ' + escHtml(s.标题) + '</a>').join('');
+    }
+
+    history.push({ role: 'assistant', content: answer });
+    if (history.length > 40) history = history.slice(-40); // 控制上下文长度
+    speakAnswer(answer); // 语音播报回答
+  } catch (e) {
+    hadError = true;
+    if (e && e.name === 'AbortError') {
+      if (answer || ui.bubbleEl.textContent) {
+        history.push({ role: 'assistant', content: ui.bubbleEl.textContent });
+      }
+      ui.hideStatus();
+    } else {
+      ui.root.remove();
+      appendError('出错了：' + errText(e) + '，请重试。');
+    }
+  } finally {
+    setGenerating(false);
+    controller = null;
+    // 连续对话：回答结束后自动继续聆听（等播报完再听，避免录入自己的声音）
+    if (continuousMode && asrConfigured && !hadError) {
+      if (autoSpeak && ((NativeVoice && 'speechSynthesis' in window === false) || 'speechSynthesis' in window)) {
+        awaitingTts = true;
+        setTimeout(() => { if (awaitingTts) { awaitingTts = false; if (!generating) autoListen(); } }, 15000); // 播报事件兜底
+      } else {
+        setTimeout(autoListen, 800);
+      }
+    }
+  }
+}
+
+// ---------- 全局错误捕获（便于排查） ----------
+window.__errs = [];
+window.addEventListener('error', e => { window.__errs.push('error: ' + e.message + ' @' + e.filename + ':' + e.lineno); });
+window.addEventListener('unhandledrejection', e => { window.__errs.push('rejection: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason))); });
+
+// ---------- 事件 ----------
+function trySend() {
+  const q = inputEl.value.trim();
+  if (!q || generating) return;
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  ask(q);
+}
+
+sendBtn.onclick = trySend;
+stopBtn.onclick = () => { if (controller) controller.abort(); };
+inputEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); trySend(); }
+});
+inputEl.addEventListener('input', () => {
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+});
+newChatBtn.onclick = () => {
+  history = [];
+  conversationId = crypto.randomUUID();
+  stopSpeaking();
+  chatEl.innerHTML = '';
+  const w = document.createElement('div');
+  w.className = 'welcome';
+  w.id = 'welcome';
+  w.innerHTML = '<h2>你好，我是维基问答机器人 🤖</h2>'
+    + '<p>遇到事实类问题，我会自动检索维基百科，再基于词条内容组织回答，并附上来源链接。<br>支持语音问答：点击 🎤 说话提问，回答会自动朗读（可点右上角 🔇 关闭）。</p>'
+    + '<div class="examples">'
+    + '<button data-q="量子计算机的基本原理是什么？">量子计算机的基本原理是什么？</button>'
+    + '<button data-q="请介绍一下《三体》作者刘慈欣">请介绍一下《三体》作者刘慈欣</button>'
+    + '<button data-q="区块链技术是怎么运作的？">区块链技术是怎么运作的？</button>'
+    + '</div>';
+  chatEl.appendChild(w);
+  w.querySelectorAll('.examples button').forEach(bindExamples);
+};
+function bindExamples(btn) {
+  btn.onclick = () => { if (!generating) { inputEl.value = btn.dataset.q; trySend(); } };
+}
+document.querySelectorAll('.welcome .examples button').forEach(bindExamples);
+
+// ---------- 启动 ----------
+loadModels();
+
+// PWA：注册 Service Worker（HTTPS 或 localhost 下生效）
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>

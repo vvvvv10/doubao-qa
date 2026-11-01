@@ -1,0 +1,13 @@
+{
+  "name": "wiki-qa-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "基于 LLM + Wiki Agent 的中文问答机器人",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

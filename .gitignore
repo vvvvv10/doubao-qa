@@ -1,0 +1,16 @@
+# 敏感数据 - 严禁提交
+asr.keys.json
+
+# 构建产物
+*.apk
+*.idsig
+android/build/
+ios/WikiQABot.app/
+ios/WikiQABot
+
+# 本地维护脚本（推送仓库用）
+push-to-github.sh
+
+# 杂项
+.DS_Store
+node_modules/

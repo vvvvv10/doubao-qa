@@ -1,0 +1,4 @@
+{
+  "api_key": "YOUR_BAIDU_ASR_API_KEY",
+  "secret_key": "YOUR_BAIDU_ASR_SECRET_KEY"
+}
