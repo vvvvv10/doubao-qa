@@ -1,9 +1,9 @@
 # 敏感数据 - 严禁提交
 asr.keys.json
 
-# 构建产物
-*.apk
-*.idsig
+# 构建产物（根目录的忽略；dist/ 安装包成品随仓库发布）
+/*.apk
+/*.idsig
 android/build/
 ios/WikiQABot.app/
 ios/WikiQABot
