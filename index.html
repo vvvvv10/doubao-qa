@@ -290,6 +290,7 @@ if ('speechSynthesis' in window) {
 function stopSpeaking(cancelStream) {
   if (NativeVoice) { NativeVoice.stopSpeak(); }
   else if ('speechSynthesis' in window) speechSynthesis.cancel();
+  stopBargeInMonitor(); // 播报已停，打断监听一并撤掉（避免与录音抢占麦克风）
   resetTtsStream();
   if (cancelStream) ttsAborted = true; // 打断后不再继续喂入后续句段
 }
@@ -324,6 +325,7 @@ function speakSegment(seg) {
   u.lang = 'zh-CN';
   if (zhVoice) u.voice = zhVoice;
   ttsPending++;
+  if (ttsPending === 1) startBargeInMonitor(); // 播报开始，开启打断监听
   u.onend = () => { if (gen === ttsGen) window.onTtsDone(); };
   u.onerror = () => { if (gen === ttsGen) window.onTtsDone(); };
   speechSynthesis.speak(u);
@@ -332,9 +334,65 @@ function speakSegment(seg) {
 function maybeTtsAllDone() {
   // 全部句段播完（且生成已结束）才算真正完成，触发连续对话续听
   if (ttsStreamEnded && ttsPending === 0) {
+    stopBargeInMonitor();
     ttsAllDoneAction();
   }
 }
+
+// ---------- 打断（barge-in）：播报中直接说话即可打断 ----------
+let biStream = null, biCtx = null, biTimer = null, biNoise = [], biMs = 0, biHighMs = 0, biActive = false;
+
+async function startBargeInMonitor() {
+  // 安卓原生桥设备走 Java 层监听（WebView 麦克风栈不可用）；其余环境网页监听
+  if (biActive || NativeVoice || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  try {
+    biActive = true; biNoise = []; biMs = 0; biHighMs = 0;
+    biStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+    if (!biActive) { cleanupBargeIn(); return; } // 等待授权期间已被取消
+    biCtx = new AudioContext();
+    const src = biCtx.createMediaStreamSource(biStream);
+    const analyser = biCtx.createAnalyser();
+    analyser.fftSize = 1024;
+    src.connect(analyser);
+    const data = new Float32Array(analyser.fftSize);
+    biTimer = setInterval(() => {
+      if (!biActive) return;
+      analyser.getFloatTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      const rms = Math.sqrt(sum / data.length);
+      biMs += 100;
+      if (biMs <= 500) { biNoise.push(rms); return; } // 先测底噪
+      let thr = (biNoise.reduce((a, b) => a + b, 0) / biNoise.length) * 2 + 0.02;
+      if (thr < 0.02) thr = 0.02;
+      if (rms > thr) biHighMs += 100; else biHighMs = 0;
+      if (biHighMs >= 300) bargeIn(); // 持续 300ms 超阈值 = 人在说话
+    }, 100);
+  } catch (e) { cleanupBargeIn(); } // 麦克风不可用则静默降级（无打断能力）
+}
+
+function cleanupBargeIn() {
+  try { if (biTimer) clearInterval(biTimer); } catch (e) {}
+  try { if (biStream) biStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { if (biCtx) biCtx.close(); } catch (e) {}
+  biStream = null; biCtx = null; biTimer = null; biActive = false;
+}
+
+function stopBargeInMonitor() { biActive = false; cleanupBargeIn(); }
+
+async function bargeIn() {
+  stopBargeInMonitor();
+  if (controller) { const c = controller; controller = null; try { c.abort(); } catch (e) {} } // 生成中也一并停止
+  stopSpeaking(true);
+  awaitingTts = false;
+  // 与 autoListen 相同的分发：安卓走原生 ASR，其余走页面录音
+  if (NativeVoice && typeof NativeVoice.startAsr === 'function' && NativeVoice.hasNativeAsr()) {
+    NativeVoice.startAsr(); nativeAsrBegin();
+  } else {
+    startRecording();
+  }
+}
+window.onBargeIn = () => { bargeIn(); }; // 安卓原生桥打断回调
 
 // 生成过程中喂入增量文本，凑满一句立即朗读
 function feedTtsStream(delta) {
@@ -401,7 +459,7 @@ window.onTtsDone = () => {
   maybeTtsAllDone();
 };
 function autoListen() {
-  if (!continuousMode || generating || !asrConfigured) return;
+  if (!continuousMode || generating || listening || !asrConfigured) return;
   if (NativeVoice && typeof NativeVoice.startAsr === 'function' && NativeVoice.hasNativeAsr()) {
     NativeVoice.startAsr();
     nativeAsrBegin();
@@ -961,7 +1019,7 @@ async function ask(question) {
     if (continuousMode && asrConfigured && !hadError) {
       if (autoSpeak && ((NativeVoice && 'speechSynthesis' in window === false) || 'speechSynthesis' in window)) {
         awaitingTts = true;
-        setTimeout(() => { if (awaitingTts) { awaitingTts = false; if (!generating) autoListen(); } }, 15000); // 播报事件兜底
+        setTimeout(() => { if (awaitingTts) { awaitingTts = false; if (!generating && !listening) autoListen(); } }, 15000); // 播报事件兜底
       } else {
         setTimeout(autoListen, 800);
       }

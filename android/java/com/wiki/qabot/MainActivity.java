@@ -37,6 +37,7 @@ public class MainActivity extends Activity {
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
     private final java.util.concurrent.atomic.AtomicInteger ttsSeq = new java.util.concurrent.atomic.AtomicInteger();
+    private volatile boolean biRunning = false; // 打断（barge-in）监听运行标记
     private volatile boolean asrRecording = false;
     private volatile String asrStatus = "idle";   // idle|recording|captured|error
     private volatile String asrAudio = null;      // WAV base64
@@ -73,7 +74,9 @@ public class MainActivity extends Activity {
                     tts.setLanguage(Locale.CHINA);
                     ttsReady = true;
                     tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
-                        @Override public void onStart(String utteranceId) {}
+                        @Override public void onStart(String utteranceId) {
+                            startBargeInMonitor(); // 播报开始，开启打断监听
+                        }
                         @Override public void onDone(String utteranceId) {
                             // 流式播报：每句一个唯一 id，前缀匹配逐句回调
                             if (utteranceId != null && utteranceId.startsWith("wiki-qa-answer")) jsEval("onTtsDone()");
@@ -155,6 +158,68 @@ public class MainActivity extends Activity {
         recognizer.startListening(intent);
     }
 
+    // ---------- 打断（barge-in）：播报中监听麦克风，检测到人声即回调 onBargeIn() ----------
+    // 用 VOICE_COMMUNICATION 音源获得系统级回声消除，避免喇叭里的 TTS 触发误打断
+    private void startBargeInMonitor() {
+        if (biRunning || asrRecording || !hasMicPermission()) return;
+        biRunning = true;
+        new Thread(new Runnable() {
+            @Override public void run() {
+                android.media.AudioRecord ar = null;
+                try {
+                    final int rate = 16000;
+                    int minBuf = android.media.AudioRecord.getMinBufferSize(rate,
+                            android.media.AudioFormat.CHANNEL_IN_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT);
+                    ar = new android.media.AudioRecord(android.media.MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                            rate, android.media.AudioFormat.CHANNEL_IN_MONO,
+                            android.media.AudioFormat.ENCODING_PCM_16BIT, Math.max(minBuf, rate));
+                    if (ar.getState() != android.media.AudioRecord.STATE_INITIALIZED) return;
+                    ar.startRecording();
+                    byte[] buf = new byte[3200]; // 100ms @16k/16bit/mono
+                    double noiseSum = 0; int noiseN = 0; double threshold = -1;
+                    int highMs = 0; long totalMs = 0;
+                    while (biRunning && totalMs < 30000) {
+                        int n = ar.read(buf, 0, buf.length);
+                        if (n <= 0) continue;
+                        totalMs += n / 32;
+                        long sum = 0; int samples = n / 2;
+                        for (int i = 0; i + 1 < n; i += 2) {
+                            short v = (short) (((buf[i] & 0xFF)) | (buf[i + 1] << 8));
+                            sum += (long) v * v;
+                        }
+                        double rms = Math.sqrt((double) sum / Math.max(1, samples));
+                        if (threshold < 0) {
+                            if (totalMs <= 500) { noiseSum += rms; noiseN++; }
+                            else threshold = (noiseSum / Math.max(1, noiseN)) * 2 + 600;
+                        } else if (rms > threshold) {
+                            highMs += 100;
+                            if (highMs >= 300) { biRunning = false; jsEval("onBargeIn()"); }
+                        } else {
+                            highMs = 0;
+                        }
+                    }
+                } catch (Throwable t) {
+                    // 监听失败只是没有打断能力，不影响主流程
+                } finally {
+                    biRunning = false;
+                    try { if (ar != null) { ar.stop(); ar.release(); } } catch (Throwable t) {}
+                }
+            }
+        }).start();
+    }
+
+    private void stopBargeInMonitor() {
+        biRunning = false;
+    }
+
+    private void waitBargeInStopped() {
+        // 等监听线程退出，避免与 ASR 录音抢麦克风（最多 600ms）
+        long deadline = System.currentTimeMillis() + 600;
+        while (biRunning && System.currentTimeMillis() < deadline) {
+            try { Thread.sleep(50); } catch (InterruptedException e) { break; }
+        }
+    }
+
     private class Bridge {
         @JavascriptInterface
         public boolean canListen() {
@@ -169,6 +234,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void startAsr() {
             if (asrRecording || asrStatus.equals("processing")) return;
+            if (biRunning) { stopBargeInMonitor(); waitBargeInStopped(); } // 先让打断监听释放麦克风
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 asrStatus = "error";
                 asrErrMsg = "需要麦克风权限，请授权后重试";
@@ -305,7 +371,10 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void stopSpeak() {
             runOnUiThread(new Runnable() {
-                @Override public void run() { if (ttsReady) tts.stop(); }
+                @Override public void run() {
+                    if (ttsReady) tts.stop();
+                    stopBargeInMonitor(); // 播报停止，打断监听一并撤掉
+                }
             });
         }
     }
