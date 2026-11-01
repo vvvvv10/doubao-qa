@@ -287,23 +287,89 @@ if ('speechSynthesis' in window) {
   voiceSelect.style.display = 'none';
 }
 
-function stopSpeaking() {
-  if (NativeVoice) { NativeVoice.stopSpeak(); return; }
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
+function stopSpeaking(cancelStream) {
+  if (NativeVoice) { NativeVoice.stopSpeak(); }
+  else if ('speechSynthesis' in window) speechSynthesis.cancel();
+  resetTtsStream();
+  if (cancelStream) ttsAborted = true; // 打断后不再继续喂入后续句段
 }
 
-function speakAnswer(text) {
-  if (!autoSpeak) return;
+// ---------- 流式播报：边生成边朗读，不必等全文 ----------
+let ttsBuf = '';          // 未凑满一句的缓冲
+let ttsPending = 0;       // 已入队未播完的句段数
+let ttsStreamEnded = false;
+let ttsAborted = false;
+let ttsGen = 0;           // 代际号：作废上一轮被取消句段的回调，防止计数串扰
+
+function resetTtsStream() {
+  ttsBuf = '';
+  ttsPending = 0;
+  ttsStreamEnded = false;
+  ttsGen++;
+}
+
+function cleanForTts(text) {
   // 朗读时跳过「来源：」行，避免念出一串链接
-  const toSpeak = text.split('\n').filter(l => !/^来源[:：]/.test(l.trim())).join('\n').trim();
+  return text.split('\n').filter(l => !/^来源[:：]/.test(l.trim())).join('\n').trim();
+}
+
+function speakSegment(seg) {
+  if (!autoSpeak || ttsAborted) return;
+  seg = cleanForTts(seg);
+  if (!seg) return;
+  if (NativeVoice) { NativeVoice.speak(seg.slice(0, 800)); ttsPending++; return; }
+  if (!('speechSynthesis' in window)) return;
+  const gen = ttsGen;
+  const u = new SpeechSynthesisUtterance(seg.slice(0, 800));
+  u.lang = 'zh-CN';
+  if (zhVoice) u.voice = zhVoice;
+  ttsPending++;
+  u.onend = () => { if (gen === ttsGen) window.onTtsDone(); };
+  u.onerror = () => { if (gen === ttsGen) window.onTtsDone(); };
+  speechSynthesis.speak(u);
+}
+
+function maybeTtsAllDone() {
+  // 全部句段播完（且生成已结束）才算真正完成，触发连续对话续听
+  if (ttsStreamEnded && ttsPending === 0) {
+    ttsAllDoneAction();
+  }
+}
+
+// 生成过程中喂入增量文本，凑满一句立即朗读
+function feedTtsStream(delta) {
+  if (!autoSpeak || ttsAborted) { ttsBuf = ''; return; }
+  ttsBuf += delta;
+  let cut = -1;
+  for (const ch of ['。', '！', '？', '；', '!', '?', ';', '\n']) {
+    const i = ttsBuf.lastIndexOf(ch);
+    if (i > cut) cut = i;
+  }
+  if (cut >= 0) {
+    speakSegment(ttsBuf.slice(0, cut + 1));
+    ttsBuf = ttsBuf.slice(cut + 1);
+  } else if (ttsBuf.length >= 100) { // 兜底：长句无标点也强制出声
+    speakSegment(ttsBuf);
+    ttsBuf = '';
+  }
+}
+
+function endTtsStream() {
+  if (ttsBuf.trim()) speakSegment(ttsBuf);
+  ttsBuf = '';
+  ttsStreamEnded = true;
+  maybeTtsAllDone();
+}
+
+function speakAnswer(text) { // 非流式场景兜底（如错误提示）
+  if (!autoSpeak || ttsAborted) return;
+  const toSpeak = cleanForTts(text);
   if (!toSpeak) return;
   if (NativeVoice) { NativeVoice.speak(toSpeak.slice(0, 800)); return; }
   if (!('speechSynthesis' in window)) return;
   const u = new SpeechSynthesisUtterance(toSpeak.slice(0, 800));
   u.lang = 'zh-CN';
   if (zhVoice) u.voice = zhVoice;
-  u.onend = () => { if (typeof onTtsDone === 'function') onTtsDone(); };
-  u.onerror = () => { if (typeof onTtsDone === 'function') onTtsDone(); };
   speechSynthesis.speak(u);
 }
 
@@ -323,11 +389,16 @@ contBtn.onclick = () => {
 };
 renderContBtn();
 
-window.onTtsDone = () => {
+function ttsAllDoneAction() {
   if (awaitingTts) {
     awaitingTts = false;
     if (continuousMode && !generating) setTimeout(autoListen, 300);
   }
+}
+// 逐句回调入口（网页 utterance onend 与安卓原生桥共用）：计数减一，全部播完才触发续听
+window.onTtsDone = () => {
+  if (ttsPending > 0) ttsPending--;
+  maybeTtsAllDone();
 };
 function autoListen() {
   if (!continuousMode || generating || !asrConfigured) return;
@@ -344,7 +415,7 @@ ttsBtn.onclick = () => {
   ttsBtn.textContent = autoSpeak ? '🔊' : '🔇';
   ttsBtn.classList.toggle('off', !autoSpeak);
   ttsBtn.title = autoSpeak ? '语音播报：开' : '语音播报：关';
-  if (!autoSpeak) stopSpeaking();
+  if (!autoSpeak) stopSpeaking(true);
 };
 
 voiceSelect.onchange = () => {
@@ -621,7 +692,7 @@ function setupMicMode() {
       listening = true; recogFailed = false;
       micBtn.classList.add('recording');
       micBtn.textContent = '⏹';
-      stopSpeaking(); // 说话时暂停播报，避免麦克风拾音干扰
+      stopSpeaking(true); // 说话时暂停播报，避免麦克风拾音干扰
     };
     recog.onresult = (e) => {
       let interim = '', final = '';
@@ -780,6 +851,7 @@ async function ask(question) {
   controller = new AbortController();
   setGenerating(true);
   stopSpeaking(); // 开始新一轮问答前停止播报
+  ttsAborted = false; // 新一轮允许流式播报
   let hadError = false;
 
   // 本轮的模型上下文（含 system），工具轮次只在此局部累积，最终只把答案文本写入 history
@@ -814,6 +886,7 @@ async function ask(question) {
           ui.hideStatus();
           ui.bubbleEl.textContent = content;
           scrollToBottom();
+          feedTtsStream(delta.content); // 流式播报：凑满一句立即朗读
         }
         if (delta.reasoning_content) {
           // 思维链阶段：实时显示思考进度，避免长时间「无进展」假象
@@ -854,7 +927,7 @@ async function ask(question) {
       break;
     }
 
-    if (!answer) answer = '（模型未返回内容，请重试。）';
+    if (!answer) { answer = '（模型未返回内容，请重试。）'; speakAnswer(answer); }
     ui.bubbleEl.textContent = answer;
 
     // 渲染来源
@@ -865,7 +938,7 @@ async function ask(question) {
 
     history.push({ role: 'assistant', content: answer });
     if (history.length > 40) history = history.slice(-40); // 控制上下文长度
-    speakAnswer(answer); // 语音播报回答
+    endTtsStream(); // 流式播报收尾：读出剩余缓冲，全部播完触发 onTtsDone
   } catch (e) {
     hadError = true;
     if (e && e.name === 'AbortError') {
@@ -873,6 +946,10 @@ async function ask(question) {
         history.push({ role: 'assistant', content: ui.bubbleEl.textContent });
       }
       ui.hideStatus();
+      // 静默收尾：不读剩余缓冲，但已入队句段播完仍触发续听
+      ttsBuf = '';
+      ttsStreamEnded = true;
+      maybeTtsAllDone();
     } else {
       ui.root.remove();
       appendError('出错了：' + errText(e) + '，请重试。');

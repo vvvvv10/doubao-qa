@@ -36,6 +36,7 @@ public class MainActivity extends Activity {
     private SpeechRecognizer recognizer;
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
+    private final java.util.concurrent.atomic.AtomicInteger ttsSeq = new java.util.concurrent.atomic.AtomicInteger();
     private volatile boolean asrRecording = false;
     private volatile String asrStatus = "idle";   // idle|recording|captured|error
     private volatile String asrAudio = null;      // WAV base64
@@ -74,10 +75,11 @@ public class MainActivity extends Activity {
                     tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
                         @Override public void onStart(String utteranceId) {}
                         @Override public void onDone(String utteranceId) {
-                            if ("wiki-qa-answer".equals(utteranceId)) jsEval("onTtsDone()");
+                            // 流式播报：每句一个唯一 id，前缀匹配逐句回调
+                            if (utteranceId != null && utteranceId.startsWith("wiki-qa-answer")) jsEval("onTtsDone()");
                         }
                         @Override public void onError(String utteranceId) {
-                            if ("wiki-qa-answer".equals(utteranceId)) jsEval("onTtsDone()");
+                            if (utteranceId != null && utteranceId.startsWith("wiki-qa-answer")) jsEval("onTtsDone()");
                         }
                     });
                 }
@@ -294,7 +296,8 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override public void run() {
                     tts.setLanguage(Locale.CHINA);
-                    tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "wiki-qa-answer");
+                    // 流式播报：QUEUE_ADD 连续入队，每句唯一 utteranceId 便于逐句回调
+                    tts.speak(text, TextToSpeech.QUEUE_ADD, null, "wiki-qa-answer-" + ttsSeq.incrementAndGet());
                 }
             });
         }
